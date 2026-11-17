@@ -1,0 +1,257 @@
+﻿@page "/"
+@using MembersRegisterWithMongoDB.Models
+@using MembersRegisterWithMongoDB.Services
+@using MongoDB.Driver
+@inject MemberService Members
+
+<PageTitle>Jäsenrekisteri</PageTitle>
+
+<h1>Jäsenrekisteri</h1>
+
+<section class="card mb-4">
+	<div class="card-body">
+		<h2 class="h5">MongoDB-yhteys</h2>
+		<label for="connection-string" class="form-label">Yhteysosoite</label>
+		<div class="d-flex flex-wrap gap-2">
+			<input id="connection-string" class="form-control connection-string" type="password"
+				   @bind="connectionString" disabled="@(busy || editing is not null || deleting is not null)" />
+			<button type="button" class="btn btn-outline-primary" @onclick="ConnectAsync"
+					disabled="@(busy || editing is not null || deleting is not null)">Yhdistä</button>
+		</div>
+		<small class="text-muted">Osoite on käytössä vain tämän käynnistyksen ajan. Tietokanta: jasenrekisteri, kokoelma: jasenet.</small>
+		<div class="mt-2">@(connected ? "Yhteys muodostettu" : "Ei yhteyttä")</div>
+	</div>
+</section>
+
+@if (!string.IsNullOrEmpty(error))
+{
+	<div class="alert alert-danger" role="alert">@error</div>
+}
+@if (!string.IsNullOrEmpty(notice))
+{
+	<div class="alert alert-success" role="status">@notice</div>
+}
+@if (busy)
+{
+	<p role="status">Käsitellään...</p>
+}
+
+@if (connected)
+{
+	<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+		<h2 class="h4 mb-0 me-auto">Jäsenet</h2>
+		<button type="button" class="btn btn-outline-secondary" @onclick="RefreshAsync"
+				disabled="@(busy || editing is not null || deleting is not null)">Päivitä lista</button>
+		<button type="button" class="btn btn-primary" @onclick="NewMember"
+				disabled="@(busy || requiresRefresh || editing is not null || deleting is not null)">Lisää jäsen</button>
+	</div>
+
+	@if (editing is not null)
+	{
+		<section class="card mb-4">
+			<div class="card-body">
+				<h2 class="h5">@(adding ? "Uusi jäsen" : "Muokkaa jäsentä")</h2>
+				<EditForm Model="editing" OnValidSubmit="SaveAsync" @key="editing">
+					<DataAnnotationsValidator />
+					<fieldset disabled="@busy">
+					<div class="row g-3">
+						<div class="col-12 col-md-6">
+							<label for="first-name" class="form-label">Etunimi</label>
+							<InputText id="first-name" class="form-control" @bind-Value="editing.FirstName" />
+							<ValidationMessage For="() => editing.FirstName" />
+						</div>
+						<div class="col-12 col-md-6">
+							<label for="last-name" class="form-label">Sukunimi</label>
+							<InputText id="last-name" class="form-control" @bind-Value="editing.LastName" />
+							<ValidationMessage For="() => editing.LastName" />
+						</div>
+						<div class="col-12 col-md-8">
+							<label for="address" class="form-label">Osoite</label>
+							<InputText id="address" class="form-control" @bind-Value="editing.Address" />
+							<ValidationMessage For="() => editing.Address" />
+						</div>
+						<div class="col-12 col-md-4">
+							<label for="postal-code" class="form-label">Postinumero</label>
+							<InputText id="postal-code" class="form-control" @bind-Value="editing.PostalCode" />
+							<ValidationMessage For="() => editing.PostalCode" />
+						</div>
+						<div class="col-12 col-md-6">
+							<label for="phone" class="form-label">Puhelin</label>
+							<InputText id="phone" class="form-control" type="tel" @bind-Value="editing.Phone" />
+							<ValidationMessage For="() => editing.Phone" />
+						</div>
+						<div class="col-12 col-md-6">
+							<label for="email" class="form-label">Sähköposti</label>
+							<InputText id="email" class="form-control" type="email" @bind-Value="editing.Email" />
+							<ValidationMessage For="() => editing.Email" />
+						</div>
+						<div class="col-12 col-md-6">
+							<label for="membership-start" class="form-label">Jäsenyyden alkamispäivä</label>
+							<InputDate id="membership-start" class="form-control" @bind-Value="editing.MembershipStartDate" />
+							<ValidationMessage For="() => editing.MembershipStartDate" />
+						</div>
+					</div>
+					</fieldset>
+					<div class="d-flex gap-2 mt-3">
+						<button type="submit" class="btn btn-primary" disabled="@(busy || requiresRefresh)">Tallenna</button>
+						<button type="button" class="btn btn-outline-secondary" @onclick="CancelEdit" disabled="@busy">Peruuta</button>
+					</div>
+				</EditForm>
+			</div>
+		</section>
+	}
+
+	@if (deleting is not null)
+	{
+		<div class="alert alert-warning" role="alert">
+			<p>Poistetaanko jäsen @deleting.FirstName @deleting.LastName? Poistoa ei voi perua.</p>
+			<button type="button" class="btn btn-danger me-2" @onclick="DeleteAsync" disabled="@(busy || requiresRefresh)">Poista</button>
+			<button type="button" class="btn btn-outline-secondary" @onclick="CancelDelete" disabled="@busy">Peruuta</button>
+		</div>
+	}
+
+	@if (members.Count == 0)
+	{
+		<p>Ei jäseniä.</p>
+	}
+	else
+	{
+		<div class="table-responsive">
+			<table class="table table-striped align-middle">
+				<thead><tr><th>Etunimi</th><th>Sukunimi</th><th>Osoite</th><th>Postinumero</th><th>Puhelin</th><th>Sähköposti</th><th>Jäsenyyden alku</th><th>Toiminnot</th></tr></thead>
+				<tbody>
+					@foreach (var member in members)
+					{
+						<tr @key="member.Id">
+							<td>@member.FirstName</td><td>@member.LastName</td><td>@member.Address</td><td>@member.PostalCode</td>
+							<td>@member.Phone</td><td>@member.Email</td><td>@member.MembershipStartDate?.ToString("dd.MM.yyyy")</td>
+							<td class="text-nowrap">
+								<button type="button" class="btn btn-sm btn-outline-primary me-1" @onclick="() => EditMember(member)" disabled="@(busy || requiresRefresh || editing is not null || deleting is not null)">Muokkaa</button>
+								<button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDelete(member)" disabled="@(busy || requiresRefresh || editing is not null || deleting is not null)">Poista</button>
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}
+
+@code {
+	private string connectionString = DeviceInfo.Platform == DevicePlatform.Android
+		? "mongodb://10.0.2.2:27017" : "mongodb://localhost:27017";
+	private List<Member> members = [];
+	private Member? editing;
+	private Member? deleting;
+	private bool connected;
+	private bool busy;
+	private bool adding;
+	private bool requiresRefresh;
+	private string? error;
+	private string? notice;
+
+	protected override Task OnInitializedAsync() => ConnectAsync();
+
+	private async Task ConnectAsync()
+	{
+		busy = true;
+		error = notice = null;
+		try
+		{
+			members = await Members.ConnectAsync(connectionString.Trim());
+			connected = true;
+			requiresRefresh = false;
+		}
+		catch (Exception ex) when (IsDatabaseError(ex))
+		{
+			error = "Yhteyden muodostaminen epäonnistui. Tarkista osoite, palvelimen saatavuus ja käyttöoikeudet." +
+					(connected ? " Edellinen yhteys on edelleen käytössä." : "");
+		}
+		finally { busy = false; }
+	}
+
+	private async Task RefreshAsync()
+	{
+		busy = true;
+		error = notice = null;
+		try { members = await Members.GetAllAsync(); requiresRefresh = false; }
+		catch (Exception ex) when (IsDatabaseError(ex))
+		{
+			error = "Jäsenlistan päivitys epäonnistui. Tarkista MongoDB-yhteys ja yritä uudelleen.";
+		}
+		finally { busy = false; }
+	}
+
+	private void NewMember() { editing = new Member(); adding = true; error = notice = null; }
+	private void EditMember(Member member) { editing = member.Copy(); adding = false; error = notice = null; }
+	private void CancelEdit() { editing = null; error = requiresRefresh ? "Päivitä lista ennen seuraavaa muutosta." : null; notice = null; }
+	private void ConfirmDelete(Member member) { deleting = member; error = notice = null; }
+	private void CancelDelete() { deleting = null; error = requiresRefresh ? "Päivitä lista ennen seuraavaa muutosta." : null; notice = null; }
+
+	private async Task SaveAsync()
+	{
+		if (editing is null) return;
+		busy = true;
+		error = notice = null;
+		try
+		{
+			editing.FirstName = editing.FirstName.Trim();
+			editing.LastName = editing.LastName.Trim();
+			editing.Address = editing.Address.Trim();
+			editing.PostalCode = editing.PostalCode.Trim();
+			editing.Phone = editing.Phone.Trim();
+			editing.Email = editing.Email.Trim();
+			if (adding)
+				await Members.AddAsync(editing);
+			else if (!await Members.UpdateAsync(editing))
+			{
+				requiresRefresh = true;
+				error = "Jäsentä ei enää löydy tietokannasta. Peruuta muokkaus ja päivitä lista.";
+				return;
+			}
+			editing = null;
+			notice = "Jäsen tallennettiin.";
+			await ReloadAfterChangeAsync();
+		}
+		catch (Exception ex) when (IsDatabaseError(ex))
+		{
+			requiresRefresh = true;
+			error = "Tallennus epäonnistui tai sen tulosta ei voitu varmistaa. Peruuta muokkaus ja päivitä lista ennen uutta yritystä.";
+		}
+		finally { busy = false; }
+	}
+
+	private async Task DeleteAsync()
+	{
+		if (deleting?.Id is null) return;
+		busy = true;
+		error = notice = null;
+		try
+		{
+			var deleted = await Members.DeleteAsync(deleting.Id);
+			deleting = null;
+			if (deleted) notice = "Jäsen poistettiin.";
+			else error = "Jäsentä ei enää löydy tietokannasta.";
+			await ReloadAfterChangeAsync();
+		}
+		catch (Exception ex) when (IsDatabaseError(ex))
+		{
+			requiresRefresh = true;
+			error = "Poisto epäonnistui tai sen tulosta ei voitu varmistaa. Peruuta poisto ja päivitä lista ennen uutta yritystä.";
+		}
+		finally { busy = false; }
+	}
+
+	private async Task ReloadAfterChangeAsync()
+	{
+		try { members = await Members.GetAllAsync(); }
+		catch (Exception ex) when (IsDatabaseError(ex))
+		{
+			requiresRefresh = true;
+			error = "Jäsenlistaa ei voitu päivittää. Päivitä lista ennen seuraavaa muutosta.";
+		}
+	}
+
+	private static bool IsDatabaseError(Exception ex) =>
+		ex is MongoException or TimeoutException or FormatException or ArgumentException;
+}
